@@ -1,2 +1,7 @@
 /target
-credentials.txt
+twitter_credentials.txt
+tenor_credentials.txt
+giphy_credentials.txt
+error.txt
+reaction_gifs_test.csv
+.gitignore
