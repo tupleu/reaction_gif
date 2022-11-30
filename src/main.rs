@@ -1,18 +1,23 @@
-use std::fs::OpenOptions;
+use std::fs;
+use std::{fs::OpenOptions, io::Error};
+use std::collections::HashMap;
 
 use regex::Regex;
 use reqwest::{Client, header::{ACCEPT, HeaderMap, USER_AGENT}};
 use serde_json::{from_str, Value};
 
+const person_token: &str = "[PERSON]";
+
 #[tokio::main]
 async fn main() {
-    let twitter_token = get_twitter_token().await;
-    let tenor_token = get_tenor_token();
+    // let twitter_token = get_twitter_token().await;
+    // let tenor_token = get_tenor_token();
     // let giphy_token = get_giphy_token();
 
     
-    tenor(&twitter_token, &tenor_token).await;
-    giphy(&twitter_token).await;
+    // tenor(&twitter_token, &tenor_token).await;
+    // giphy(&twitter_token).await;
+    filter("data/");
 }
 
 async fn tenor(twitter_token: &str, tenor_token: &str) {
@@ -255,13 +260,9 @@ async fn get_tenor(key: &str, gif_id: &str) -> Option<String> {
         .unwrap();
     let json: Value = from_str(std::str::from_utf8(&response).unwrap()).unwrap();
 
-    let tags = json["results"][0]["tags"].as_array();
-    if tags.is_none() {
-        return None;
-    }
-    let tags: String = tags.unwrap().into_iter()
+    let tags: String = json["results"][0]["tags"].as_array()?.into_iter()
         .map(|v| v.as_str().unwrap().to_owned())
-        .reduce(|a , e| format!("{}, {}",a,e)).unwrap();
+        .reduce(|a , e| format!("{}, {}",a,e))?;
     return Some(tags);
 }
 
@@ -320,3 +321,70 @@ async fn get_media_giphy_url(url: String) -> Option<String> {
     Some(giphy_url)
 }
 
+fn get_kv(tweet: csv::StringRecord) -> Option<(String, (String, String, String))> {
+    let key = tweet.get(0)?.to_owned();
+    let value = (tweet.get(1)?.to_owned(), tweet.get(2)?.to_owned(), tweet.get(3)?.to_owned());
+    Some((key, value))
+}
+
+fn filter(folder: &str) -> Result<(),Error>{
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .append(true)
+        .open("filter.csv")
+        .unwrap();
+    let mut wtr = csv::Writer::from_writer(file);
+    let paths = fs::read_dir(folder)?;
+
+    let replace_replies_re = Regex::new(r"@\S+").unwrap();
+    let only_replies_re = Regex::new(r"^\s*(\[PERSON\]\s*)+$").unwrap();
+    let beginning_replies_re = Regex::new(r"^\s*(\[PERSON\]\s*)+").unwrap();
+
+    for p in paths {
+        let path = p?.path();
+        let mut tweets = HashMap::new();
+        let mut rdr = csv::Reader::from_path(path)?;
+        for result in rdr.records() {
+            let tweet = result?;
+            if let Some((key, value)) = get_kv(tweet) {
+                tweets.insert(key, value);
+            }
+        }
+        for tweet in tweets {
+            let mut text = tweet.1.1;
+            let tags = tweet.1.2;
+
+            text = text.replace("New trending GIF tagged", "");
+            text = text.replace("New GIF tagged", "");
+            text = text.replace("via Giphy", "");
+            text = text.replace("via @gifkeyboard", "");
+            text = text.replace("vía @gifkeyboard", "");
+            text = text.replace("using @gifkeyboard", "");
+            text = text.replace("via @giphy", "");
+            text = text.replace("vía @giphy", "");
+            text = text.replace("via @GIPHY", "");
+            text = text.replace("GIFs | Tenor", "");
+            text = replace_replies_re.replace_all(&text, person_token).to_string();
+            text = beginning_replies_re.replace_all(&text, "").to_string();
+            text = text.trim().to_string();
+
+            if only_replies_re.is_match(&text) {
+                continue
+            }
+            if text.is_empty() {
+                continue
+            }
+            if tags.is_empty() {
+                continue
+            }
+
+            for tag in tags.split(',') {
+                wtr.write_record(&[&tweet.0, &text, tag.trim()])?;
+                // wtr.write_record(&[&text, tag.trim()])?;
+                wtr.flush()?;
+            }
+        }
+    }
+    Ok(())
+}
