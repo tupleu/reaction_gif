@@ -10,14 +10,22 @@ const person_token: &str = "[PERSON]";
 
 #[tokio::main]
 async fn main() {
-    // let twitter_token = get_twitter_token().await;
-    // let tenor_token = get_tenor_token();
+    let twitter_token = get_twitter_token().await;
+    let tenor_token = get_tenor_token();
     // let giphy_token = get_giphy_token();
 
     
     // tenor(&twitter_token, &tenor_token).await;
     // giphy(&twitter_token).await;
-    filter("data/");
+    // filter("data/");
+    count_tags("filter.csv");
+    // let tags = Vec::from(["happy","sad"])
+    // let tags = Vec::from(["dance","happy","friday","clapping","clap","reaction","love","cute","party","weather","dog","funny","truth","applause","cheers","dancing","applaud","cat","animals","drinking","slow clap","bye","celebrate","angry","yay","laughing","smile","excited","weekend","movie","celebration","christmas","fun","thanksgiving","reactions","saturday","girl","monday","coffee","sad","friends","laugh","sunday","tgif","flower","rain","movies","puppy","wednesday","sun","crying","hello","yes","heart","snow","thursday","nice","no","alien","morning","yolo","storm","meme","wave","wow","art","clown","tuesday","congrats","fail","summer","swimming","good","robot","blessed","hot","turkey","cartoon","cry","fall","bunny","kitten","mad","funny animals","night","tv","life","surprise","i love you","day","omg","adorable","dogs","slap","beach","food","election","joker","interesting","love you","fire","winter","cool","good day","win","america","water","great job","mood","excellent","hug","space","hi","sports","crazy","haha","tired","what","yawn"])
+        // .iter().map(|&s|s.into()).collect();
+    // filter_tags("filter.csv", tags);
+    let pos = ["happy", "love", "funny", "cute", "laughing", "smile", "party", "excited", "laugh", "yay", "yes", "hello", "fun", "celebration", "heart", "hug", "good morning", "i love you", "good", "kiss", "clap", "greeting", "clapping", "love you", "haha", "cheers", "thank you", "hi", "yeah", "thanks", "good night", "kawaii", "applause", "goodnight", "nice", "hahaha", "happy dance", "win", "lmao"].iter().map(|&s|s.into()).collect();
+    let neg = ["angry", "sad", "no", "crying", "cry", "disaster", "middle finger", "tired", "fight", "fuck you", "wtf", "annoyed", "punch", "stupid", "nope", "kick", "facepalm", "annoying", "upset", "disgusted", "shit", "fuck", "burn", "poop", "fu", "fuck off", "spit", "bullshit", "frustrated", "oh no", "liar", "rage", "tears", "ass", "sobbing", "creepy", "oops", "stop", "go fuck yourself", "awkward", "death", "sob", "gross", "anger", "dwight crying", "lying", "shame", "trash", "boo", "stressed", "vomit", "tantrum", "exhausted", "evil"].iter().map(|&s|s.into()).collect();
+    sentiment_analysis("filter.csv", pos, neg);
 }
 
 async fn tenor(twitter_token: &str, tenor_token: &str) {
@@ -331,11 +339,12 @@ fn filter(folder: &str) -> Result<(),Error>{
     let file = OpenOptions::new()
         .write(true)
         .create(true)
-        .append(true)
         .open("filter.csv")
         .unwrap();
     let mut wtr = csv::Writer::from_writer(file);
     let paths = fs::read_dir(folder)?;
+
+    let mut texts = HashMap::new();
 
     let replace_replies_re = Regex::new(r"@\S+").unwrap();
     let only_replies_re = Regex::new(r"^\s*(\[PERSON\]\s*)+$").unwrap();
@@ -378,12 +387,96 @@ fn filter(folder: &str) -> Result<(),Error>{
             if tags.is_empty() {
                 continue
             }
-
-            for tag in tags.split(',') {
-                wtr.write_record(&[&tweet.0, &text, tag.trim()])?;
+            texts.insert(text,(tweet.0,tags));
+            // for tag in tags.split(',') {
+                // wtr.write_record(&[&tweet.0, &text, tag.trim()])?;
                 // wtr.write_record(&[&text, tag.trim()])?;
-                wtr.flush()?;
-            }
+                // wtr.flush()?;
+            // }
+        }
+    }
+
+    for (text,(id,tags)) in texts {
+        for tag in tags.split(',') {
+            wtr.write_record(&[&id, &text, tag.trim()])?;
+            // wtr.write_record(&[&text, tag.trim()])?;
+            wtr.flush()?;
+        }
+    }
+    Ok(())
+}
+
+fn count_tags(path: &str) -> Result<(),Error> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let mut tags = HashMap::new();
+    for result in rdr.records() {
+        let tweet = result?;
+        let tag = tweet.get(2).unwrap().to_owned().to_ascii_lowercase();
+        if(tags.contains_key(&tag)) {
+            let v = tags.get(&tag).unwrap();
+            tags.insert(tag, v+1);
+        }
+        else {
+            tags.insert(tag, 1);
+        }
+    }
+    let mut tags = Vec::from_iter(tags.into_iter());
+    tags.sort_by(|a, b| b.1.cmp(&a.1));
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open("tags.csv")
+        .unwrap();
+    let mut wtr = csv::Writer::from_writer(file);
+    for (tag, count) in tags {
+        wtr.write_record(&[tag,count.to_string()])?;
+        wtr.flush()?;
+    }
+    Ok(())
+}
+
+fn filter_tags(path: &str, tags: Vec<String>) -> Result<(),Error> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open("data.csv")
+        .unwrap();
+    let mut wtr = csv::Writer::from_writer(file);
+    for result in rdr.records() {
+        let tweet = result?;
+        let text = tweet.get(1).unwrap().to_owned();
+        let tag = tweet.get(2).unwrap().to_owned().to_ascii_lowercase();
+        if !tags.contains(&tag) {
+            continue
+        }
+        wtr.write_record(&[text, tags.iter().position(|r| r == &tag).unwrap().to_string()])?;
+        wtr.flush()?;
+    }
+    Ok(())
+}
+
+fn sentiment_analysis(path: &str, pos: Vec<String>, neg: Vec<String>) -> Result<(),Error> {
+    let mut rdr = csv::Reader::from_path(path)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .open("data.csv")
+        .unwrap();
+    let mut wtr = csv::Writer::from_writer(file);
+    for result in rdr.records() {
+        let tweet = result?;
+        let text = tweet.get(1).unwrap().to_owned();
+        let tag = tweet.get(2).unwrap().to_owned().to_ascii_lowercase();
+        if pos.contains(&tag) {
+            wtr.write_record(&[text, String::from("0")])?;
+            wtr.flush()?;
+        }
+        else if neg.contains(&tag) {
+            wtr.write_record(&[&text, &String::from("1")])?;
+            // oversampling
+            wtr.write_record(&[text, String::from("1")])?;
+            wtr.flush()?;
         }
     }
     Ok(())

@@ -5,3 +5,4 @@ giphy_credentials.txt
 error.txt
 reaction_gifs_test.csv
 .gitignore
+/model
